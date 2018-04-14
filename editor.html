@@ -425,26 +425,42 @@
                     Math.floor( (Math.random() > 0.5) ? 100 : 255)
                 );
             }
-
             sprite.UpdateMesh();
-
-            sprite.UpdateMesh();
-            console.log(sprite);
+            
             var spriteVisual = new THREE.Mesh( sprite.mesh, spritemat );
             var spriteBounds = new THREE.Box3Helper( sprite.boundingBox, 0xcccccc );
+            
+            var lineX = new THREE.Line3( 
+                new Vector3( -sprite.width/16/2, 0, 0 ), 
+                new Vector3(  sprite.width/16/2, 0, 0 )
+            );
+            var lineY = new THREE.Line3( 
+                new Vector3( 0, -sprite.height/16/2, 0 ), 
+                new Vector3( 0,  sprite.height/16/2, 0 )
+            );
+            var lineZ = new THREE.Line3( 
+                new Vector3( 0, 0, -sprite.width/16/2 ), 
+                new Vector3( 0, 0,  sprite.width/16/2 )
+            );
+            
+            var cursorPos = new THREE.Vector3(0,0,0);
+            var cursorBox = new THREE.Box3(
+                new THREE.Vector3(-1/16/2,-1/16/2,-1/16/2),
+                new THREE.Vector3( 1/16/2, 1/16/2, 1/16/2)
+            );
+            var cursorHelper = new THREE.Box3Helper( cursorBox, 0x00ff00 );
+            
+
+
             scene.add(spriteVisual);
             scene.add(spriteBounds);
+            scene.add(cursorHelper);
             camera.position.y = 0.0;
 
             var orbitX = 0;
             var orbitY = 0;
 
-            
-
             function MainLoop(){
-                
-                
-
                 if( input.GetBinding("left") ){ orbitX -= 0.01; }
                 if( input.GetBinding("right") ){ orbitX += 0.01; }
                 if( input.GetBinding("up") ){ orbitY += 0.01; }
@@ -454,6 +470,8 @@
 
                 camera.position.y = Math.sin(orbitY) * 3;
                 camera.lookAt( spriteVisual.position );
+
+                
 
                 requestAnimationFrame(MainLoop);
                 renderer.render( scene, camera);
