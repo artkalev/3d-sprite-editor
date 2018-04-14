@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+    <head>
+        <style>
+            @import url('https://fonts.googleapis.com/css?family=Roboto');
+            *{ font-family: 'Roboto', sans-serif; }
+            
+            body{ background:black; }
+            
+            #screen{
+                position:absolute;
+                top:0;
+                left:300px;
+            }
+
+            .button:hover{
+                background-color:darkturquoise;
+                color:black;
+                cursor:pointer;
+            }
+
+            .tab{
+                display:block;
+                margin:4px;
+                padding:4px;
+                border:1px solid black;
+            }
+
+            .tab[tabstate="closed"]{
+                height:28px;
+                overflow: hidden;
+            }
+
+            .tab[tabstate="closed"] .tab-header{
+                background-color: darkslategray;
+            }
+
+            .tab-header{
+                background-color:darkseagreen;
+                height:20px;
+                padding:4px;
+                margin-bottom:4px;
+                color:black;
+            }
+            .tab-header:hover{
+                cursor:pointer;
+            }
+
+            .tab-toggle{
+                background-color:grey;
+                width:16px;
+                height:16px;
+                margin-right:16px;
+                text-align: center;
+                display:inline-block;
+                border-radius:50%;
+            }
+
+            #menu{
+                width:300px;
+                height:100%;
+                position:absolute;
+                top:0;
+                left:0;
+                background:#303030;
+                color:white;
+                padding:0;
+                overflow-y:scroll;
+            }
+
+            #menu-file{
+                padding:4px;
+            }
+
+            #menu-file span{
+                text-align: center;
+                width:30%;
+                margin:0;
+                padding:0;
+                display:inline-block;
+            }
+
+        </style>
+        <script>
+            function ToggleTab( id ){
+                var tab = document.getElementById(id);
+                var state = tab.getAttribute("tabstate");
+                if(state == "open"){
+                    tab.setAttribute("tabstate","closed");
+                }else if(state == "closed"){
+                    tab.setAttribute("tabstate", "open");
+                }
+            }
+        </script>
+    </head>
+    <body>
+        <script id="vertexShader" type="shader">
+            precision lowp float;
+            attribute vec4 a_color;
+            varying vec4 v_color;
+            void main(){
+                v_color = a_color;
+                gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4( position, 1.0 );
+            }
+        </script>
+        <script id="fragmentShader" type="shader">
+            precision lowp float;
+            varying vec4 v_color;
+            void main(){
+                vec4 col = vec4(0.0,0.0,0.0,0.0);
+                col = v_color;
+                gl_FragColor = col;
+            }
+        </script>
+        <script src="three.min.js"></script>
+        <div id="menu">
+            <div id="menu-file">
+                <span class="button">New</span>
+                <span class="button">Open</span>
+                <span class="button">Save</span>
+            </div>
+            <div id="menu-tools" class="tab" tabstate="open">
+                <div class="tab-header" onclick="ToggleTab('menu-tools');">Tools</div>
+                <div class="content">
+                    todo
+                </div>
+            </div>
+            <div id="menu-settings" class="tab" tabstate="open">
+                <div class="tab-header" onclick="ToggleTab('menu-settings');">Settings</div>
+                <div class="content">
+                    <input type="checkbox" checked="checked">use antialiasing
+                </div>
+            </div>
+            <div id="menu-export" class="tab" tabstate="open">
+                <div class="tab-header" onclick="ToggleTab('menu-export');">Export</div>
+                <div class="content">
+                    <input type="button" value="Export *.OBJ"/>
+                    <input type="button" value="Export *.JSON"/>
+                </div>
+            </div>
+
+        </div>
+        <canvas id="screen"></canvas>
+
+        <script>
+            /////////////////////////////////////
+            // 3D sprite (voxel chunk) editor  //
+            /////////////////////////////////////
+
+            // init canvas and threejs
+            var canvas = document.getElementById("screen");
+            var renderer = new THREE.WebGLRenderer({canvas:canvas});
+            var scene = new THREE.Scene();
+            var camera = new THREE.PerspectiveCamera( 75, window.innerWidth/window.innerHeight, 0.01, 1000 );
+            
+            window.onresize = resize;
+
+            function resize(){
+                canvas.width = window.innerWidth - 300;
+                canvas.height = window.innerHeight;
+                renderer.setSize( canvas.width, canvas.height );
+                camera.aspect = canvas.width/canvas.height;
+                camera.updateProjectionMatrix();
+            }
+
+            resize();
+            
+            /////////////////////////////////////////////////////
+            // 3D sprite class which contains methods to edit  //
+            // voxels and to generate mesh to display it       //
+            /////////////////////////////////////////////////////
+
+            function Sprite3D( options ){
+                if(!options){ options = {}; }
+
+                this.width = options.width || 16;
+                this.height = options.height || 32;
+                this.depth = options.depth || 16;
+                this.data = options.data || new Uint8Array( this.width*this.height*this.depth*4 );
+                this.mesh = new THREE.BufferGeometry();
+                this.boundingBox = new THREE.Box3( 
+                    new THREE.Vector3(
+                        -this.width/16/2,
+                        -this.height/16/2,
+                        -this.depth/16/2
+                    ), 
+                    new THREE.Vector3(
+                        this.width/16/2,
+                        this.height/16/2,
+                        this.depth/16/2
+                    ) 
+                );
+            }
+            
+            Sprite3D.prototype.GetIndex = function(x,y,z){
+                return x + y*this.width + z*this.width*this.height;
+            }
+
+            Sprite3D.prototype.UpdateMesh = function(){
+                this.mesh.dispose();
+                var s = 1/16;
+                var vertices = [];
+                var colors = [];
+                for(var x = 0; x < this.width; x++){
+                    for(var y = 0; y < this.height; y++){
+                        for(var z = 0; z < this.depth; z++){
+                            var index = this.GetIndex( x,y,z );
+                            var color = this.Get( x,y,z );
+                            if( color[3] == 0 ){ continue; }
+
+                            // check and create faces for voxel sides
+                            
+                            var p = [x-this.width/2 , y-this.height/2, z-this.depth/2];
+
+                            var colorXpos = this.Get(x+1, y, z);
+                            if(colorXpos[3] == 0){
+                                var p00 = [ p[0] + 1.0, p[1], p[2] ];
+                                var p01 = [ p00[0],  p00[1] + 1.0 ,  p00[2]       ];
+                                var p10 = [ p00[0],  p00[1]       ,  p00[2] + 1.0 ];
+                                var p11 = [ p00[0],  p00[1] + 1.0 ,  p00[2] + 1.0 ];
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p01[0]*s , p01[1]*s , p01[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p10[0]*s , p10[1]*s , p10[2]*s );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                            }
+
+                            var colorXneg = this.Get(x-1, y, z);
+                            if(colorXneg[3] == 0){
+                                var p00 = [ p[0], p[1], p[2] ];
+                                var p01 = [ p00[0],  p00[1] + 1.0 ,  p00[2]       ];
+                                var p10 = [ p00[0],  p00[1]       ,  p00[2] + 1.0 ];
+                                var p11 = [ p00[0],  p00[1] + 1.0 ,  p00[2] + 1.0 ];
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p01[0]*s , p01[1]*s , p01[2]*s );
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p10[0]*s , p10[1]*s , p10[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                            }
+
+                            var colorZpos = this.Get(x, y, z+1);
+                            if(colorZpos[3] == 0){
+                                var p00 = [ p[0], p[1], p[2] + 1 ];
+                                var p01 = [ p00[0]      ,  p00[1] + 1.0 ,  p00[2] ];
+                                var p10 = [ p00[0] + 1.0,  p00[1]       ,  p00[2] ];
+                                var p11 = [ p00[0] + 1.0,  p00[1] + 1.0 ,  p00[2] ];
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p01[0]*s , p01[1]*s , p01[2]*s );
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p10[0]*s , p10[1]*s , p10[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                            }
+
+                            var colorZneg = this.Get(x, y, z-1);
+                            if(colorZneg[3] == 0){
+                                var p00 = [ p[0], p[1], p[2] ];
+                                var p01 = [ p00[0]      ,  p00[1] + 1.0 ,  p00[2] ];
+                                var p10 = [ p00[0] + 1.0,  p00[1]       ,  p00[2] ];
+                                var p11 = [ p00[0] + 1.0,  p00[1] + 1.0 ,  p00[2] ];
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p01[0]*s , p01[1]*s , p01[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p10[0]*s , p10[1]*s , p10[2]*s );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                            }
+
+                            var colorYpos = this.Get(x, y+1, z);
+                            if(colorYpos[3] == 0){
+                                var p00 = [ p[0], p[1]+1, p[2] ];
+                                var p01 = [ p00[0]      ,  p00[1] ,  p00[2]+1.0 ];
+                                var p10 = [ p00[0] + 1.0,  p00[1] ,  p00[2]     ];
+                                var p11 = [ p00[0] + 1.0,  p00[1] ,  p00[2]+1.0 ];
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p01[0]*s , p01[1]*s , p01[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p10[0]*s , p10[1]*s , p10[2]*s );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                            }
+                            
+                            var colorYpos = this.Get(x, y-1, z);
+                            if(colorYpos[3] == 0){
+                                var p00 = [ p[0], p[1], p[2] ];
+                                var p01 = [ p00[0]      ,  p00[1] ,  p00[2]+1.0 ];
+                                var p10 = [ p00[0] + 1.0,  p00[1] ,  p00[2]     ];
+                                var p11 = [ p00[0] + 1.0,  p00[1] ,  p00[2]+1.0 ];
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                vertices.push( p01[0]*s , p01[1]*s , p01[2]*s );
+                                vertices.push( p00[0]*s , p00[1]*s , p00[2]*s );
+                                vertices.push( p10[0]*s , p10[1]*s , p10[2]*s );
+                                vertices.push( p11[0]*s , p11[1]*s , p11[2]*s );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                                colors.push( color[0],color[1],color[2],color[3] );
+                            }
+                        }
+                    }   
+                }
+                this.mesh.addAttribute( 
+                    "position", 
+                    new THREE.BufferAttribute( 
+                        new Float32Array( vertices ), 
+                        3 
+                    ) 
+                );
+                this.mesh.addAttribute( 
+                    "a_color", 
+                    new THREE.BufferAttribute( 
+                        new Uint8Array( colors ), 
+                        4,
+                        true 
+                    ) 
+                );
+            };
+
+            Sprite3D.prototype.Get = function(x,y,z){
+                if(
+                    x < 0 || x >= this.width ||
+                    y < 0 || y >= this.height ||
+                    z < 0 || z >= this.depth
+                ){
+                    return [0,0,0,0];
+                }
+                var index = this.GetIndex(x,y,z);
+                return [ this.data[index*4+0],this.data[index*4+1],this.data[index*4+2],this.data[index*4+3] ];
+            }
+
+            Sprite3D.prototype.Set = function( x,y,z, r,g,b,a ){
+                var index = x + y*this.width + z*this.width*this.height;
+                this.data[index*4 + 0] = r;
+                this.data[index*4 + 1] = g;
+                this.data[index*4 + 2] = b;
+                this.data[index*4 + 3] = a;
+            }
+
+            ////////////////////
+            // input wrapping //
+            ////////////////////
+
+            var input = {
+                keys:{},
+                bindings:{
+                    "left":[65,37],
+                    "right":[68,39],
+                    "up":[87,38],
+                    "down":[83,40]
+                },
+                GetBinding:function( name ){
+                    if(!this.bindings.hasOwnProperty(name)){ return false; }
+                    for( var i = 0; i < this.bindings[name].length; i++ ){
+                        if( this.keys[this.bindings[name][i]] ){
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            };
+
+            window.addEventListener("keydown", function(e){
+                input.keys[e.keyCode] = true;
+            });
+
+            window.addEventListener("keyup", function(e){
+                input.keys[e.keyCode] = false;
+            });
+
+            //////////////////
+            // application  //
+            //////////////////
+
+            var spritemat = new THREE.ShaderMaterial( {
+                uniforms: {
+                },
+                vertexShader: document.getElementById( 'vertexShader' ).textContent,
+                fragmentShader: document.getElementById( 'fragmentShader' ).textContent,
+                transparent:true
+            });
+            var sprite = new Sprite3D();
+            
+            for(var i = 0; i < 64; i++){
+                sprite.Set( 
+                    Math.floor( Math.random()*sprite.width ),
+                    Math.floor( Math.random()*sprite.height ),
+                    Math.floor( Math.random()*sprite.depth ),
+                    Math.floor( Math.random()*255 ),
+                    Math.floor( Math.random()*255 ),
+                    Math.floor( Math.random()*255 ),
+                    Math.floor( (Math.random() > 0.5) ? 100 : 255)
+                );
+            }
+
+            sprite.UpdateMesh();
+
+            sprite.UpdateMesh();
+            console.log(sprite);
+            var spriteVisual = new THREE.Mesh( sprite.mesh, spritemat );
+            var spriteBounds = new THREE.Box3Helper( sprite.boundingBox, 0xcccccc );
+            scene.add(spriteVisual);
+            scene.add(spriteBounds);
+            camera.position.y = 0.0;
+
+            var orbitX = 0;
+            var orbitY = 0;
+
+            
+
+            function MainLoop(){
+                
+                
+
+                if( input.GetBinding("left") ){ orbitX -= 0.01; }
+                if( input.GetBinding("right") ){ orbitX += 0.01; }
+                if( input.GetBinding("up") ){ orbitY += 0.01; }
+                if( input.GetBinding("down") ){ orbitY -= 0.01; }
+                camera.position.x = Math.sin(orbitX) * 3 * Math.cos(orbitY);
+                camera.position.z = Math.cos(orbitX) * 3 * Math.cos(orbitY);
+
+                camera.position.y = Math.sin(orbitY) * 3;
+                camera.lookAt( spriteVisual.position );
+
+                requestAnimationFrame(MainLoop);
+                renderer.render( scene, camera);
+            }
+
+            MainLoop();
+
+        </script>
+    </body>
+</html>
